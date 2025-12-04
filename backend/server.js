@@ -27,6 +27,8 @@ app.use('/api/premium', require('./routes/premium'));
 app.use('/api/policies', require('./routes/policies'));
 app.use('/api/claims', require('./routes/claims'));
 app.use('/api/payments', require('./routes/payments'));
+app.use('/api/kyc', require('./routes/kyc'));
+app.use('/api/renewals', require('./routes/renewals'));
 
 // Simple root route
 app.get('/', (req, res) => {

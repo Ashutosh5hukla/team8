@@ -5,12 +5,16 @@ const pdfService = require('../services/pdfService');
 
 // 1. User initiates purchase
 exports.purchasePolicy = (req, res) => {
-    const { productId, premiumAmount } = req.body;
+    const { productId, premiumAmount, coverageAmount, premiumBreakdown } = req.body;
     const userId = req.user.id;
 
     try {
         // Create record with 'PENDING_PAYMENT'
-        const result = PolicyModel.createPolicy(userId, productId, premiumAmount);
+        const db = require('../config/db');
+        const result = db.prepare(`
+            INSERT INTO policies (user_id, product_id, premium_amount, coverage_amount, premium_breakdown, status)
+            VALUES (?, ?, ?, ?, ?, 'PENDING_PAYMENT')
+        `).run(userId, productId, premiumAmount, coverageAmount, JSON.stringify(premiumBreakdown));
 
         AuditModel.logAction('PURCHASE_INITIATED', userId, `Policy ID ${result.lastInsertRowid} created pending payment`);
 
@@ -19,12 +23,13 @@ exports.purchasePolicy = (req, res) => {
             policyId: result.lastInsertRowid
         });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: "Purchase failed" });
     }
 };
 
 // 2. Simulate Payment & Issue Policy
-exports.simulatePayment = (req, res) => {
+exports.simulatePayment = async (req, res) => {
     const { policyId } = req.body;
 
     try {
@@ -47,18 +52,28 @@ exports.simulatePayment = (req, res) => {
         // Get Product details for PDF
         const product = ProductModel.findById(policy.product_id);
 
-        pdfService.generatePolicyPDF({
+        // Generate PDF with QR code
+        const qrData = await pdfService.generatePolicyPDF({
             path: pdfPath,
             policyNumber,
             productName: product.name,
             premium: policy.premium_amount,
+            coverageAmount: policy.coverage_amount,
             holderName: req.user.username,
+            userId: req.user.id,
             startDate,
-            endDate
+            endDate,
+            premiumBreakdown: policy.premium_breakdown,
+            features: product.features
         });
 
-        // Update DB
-        PolicyModel.updateStatusAndPdf(policyId, 'ACTIVE', policyNumber, pdfPath, startDate, endDate);
+        // Update DB with QR code
+        const db = require('../config/db');
+        db.prepare(`
+            UPDATE policies 
+            SET status = ?, policy_number = ?, pdf_path = ?, start_date = ?, end_date = ?, qr_code = ?
+            WHERE id = ?
+        `).run('ACTIVE', policyNumber, pdfPath, startDate, endDate, qrData, policyId);
 
         AuditModel.logAction('PAYMENT_SUCCESS', req.user.id, `Policy ${policyNumber} issued`);
 
